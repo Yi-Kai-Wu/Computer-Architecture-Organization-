@@ -67,6 +67,7 @@ module CHIP #(                                                                  
         wire    [BIT_W-1:0]  write_data, rs1_data, rs2_data;
         wire    [BIT_W-1:0]  alu_in_1, alu_in_2, alu_result;
         wire                br_comp;//Result of the branch instruction;=1 when branch condition holds
+        wire                br_equal, br_less;
         reg     [3:0]       ctrl_alu;
         wire    [BIT_W-1:0]  read_or_alu_result;//output of Mux2
         wire    [BIT_W-1:0]  pc_plus_4, pc_plus_imm;
@@ -104,7 +105,7 @@ module CHIP #(                                                                  
         // ctrl_alu_src = 1, alu_input_2 = imm.;
         //else ctrl_alu_src =0,alu_input_2 = rs2
 
-    assign ctrl_auipc = (opcode == U_TYPE_AUIPC) 1'b1 : 1'b0;
+    assign ctrl_auipc = (opcode == U_TYPE_AUIPC) ? 1'b1 : 1'b0;
         //When auipc, write_data = PC + imm.
 
     assign ctrl_mem_to_reg = ( opcode == I_TYPE_LOAD ) ? 1'b1 : 1'b0;
@@ -168,12 +169,14 @@ module CHIP #(                                                                  
                 : (ctrl_jalr) ? jalr_addr : jal_addr;
     end
 
+    assign o_IMEM_cen = 1'b1;
+
     //Deal with ecall
-    assign ctrl_ecall = ({funct3, opcode}== {3'b000, ECALL}) ? 1'b1, 1'b0;
+    assign ctrl_ecall = ({funct3, opcode}== {3'b000, ECALL}) ? 1'b1 : 1'b0;
     //To-do:
     //Ask cache to store all values back to memory. When received cache store_finish, pull up o_finish
     //Assume no cache:
-    assign o_finish = (ctrl_ecall) 1'b1 : 1'b0;
+    assign o_finish = (ctrl_ecall) ? 1'b1 : 1'b0;
     
 
 // ------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -196,7 +199,8 @@ module CHIP #(                                                                  
         .ctrl(ctrl_alu),
         .x(alu_in_1),
         .y(alu_in_2),
-        .br_comp(br_comp),
+        .br_equal(br_equal),
+        .br_less(br_less),
         .out(alu_result)  
     );
 
@@ -240,6 +244,7 @@ module CHIP #(                                                                  
                     {7'b0100000, 3'b000} : ctrl_alu = 4'b0110;//SUB
                     {7'b0000000, 3'b100} : ctrl_alu = 4'b0100;//XOR
                     {7'b0000001, 3'b000} : ctrl_alu = 4'b0111;//MUL
+                    default : ctrl_alu = 4'b0010;//ADD
                 endcase
             end
             B_TYPE : ctrl_alu = 4'b0110;//SUB
@@ -249,6 +254,7 @@ module CHIP #(                                                                  
                     {3'b001} : ctrl_alu = 4'b0101;//SLL
                     {3'b101} : ctrl_alu = 4'b0011;//SRA
                     {3'b010} : ctrl_alu = 4'b1000;//SLT
+                    default : ctrl_alu = 4'b0010;//ADD
                 endcase
             end
             S_TYPE, I_TYPE_LOAD : ctrl_alu = 4'b0010;//ADD
@@ -391,7 +397,7 @@ module alu #(
     //wire & reg declaration
     reg            carry;
     reg [BIT_W-1:0] out;
-    reg [63:0] out_64;
+    wire [63:0] out_64;
 
     //To-do: instantiate MULDIV_unit
     MULDIV_unit muldiv_unit(
@@ -400,8 +406,6 @@ module alu #(
         .Y(out_64)
     );
 
-    // Lower 32 bits of the output
-    assign out = out_64[31:0];
 
 //CL:
     always@(*)begin
@@ -450,6 +454,11 @@ module alu #(
                 br_equal = 1'b0;
                 br_less = 1'b0;
             end 
+            MUL : begin
+                {carry, out} = {1'b0, out_64[31:0]};
+                br_equal = 1'b0;
+                br_less = 1'b0;
+            end
 
             default:    {br_equal, br_less, carry, out} = {1'b0, 1'b0, 1'b0, 32'b0};
         endcase
