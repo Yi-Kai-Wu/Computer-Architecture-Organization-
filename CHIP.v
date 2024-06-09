@@ -157,7 +157,7 @@ module CHIP #(                                                                  
         (funct3 == 3'b001 && ~br_equal) || 
         (funct3 == 3'b100 && br_less) || 
         (funct3 == 3'b101 && ~br_less) 
-    ) : 1'b0;
+    );
     
     //MUX4
     assign jal_addr = (ctrl_jal||(ctrl_branch && br_comp)) ? pc_plus_imm : pc_plus_4;
@@ -381,7 +381,7 @@ module alu #(
     input  [BIT_W-1:0] x;//rs1
     input  [BIT_W-1:0] y;//rs2
     // output reg        br_comp;
-    output_reg      br_equal, br_less;
+    output reg      br_equal, br_less;
     output [BIT_W-1:0] out;
 
     //Parameter
@@ -414,7 +414,7 @@ module alu #(
             SUB: begin
                 {carry, out} = {x[BIT_W-1], x} - {y[BIT_W-1],y};
                 br_equal = ~(|out);//=1 when all bits are 0; Test is this is smaller than br_comp = (out == 0) ? 1'b1 : 1'b0;
-                br_less = out[BIT_W-1];
+                br_less = carry;//=1 when rs1<rs2, carry(sign bit) ==1
             end
             BITWISE_AND:  begin
                 {carry, out} = {1'b0, x & y};
