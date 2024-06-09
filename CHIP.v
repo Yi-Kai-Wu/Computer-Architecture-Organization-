@@ -111,7 +111,7 @@ module CHIP #(                                                                  
         //=1 when load, means read_or_alu_result = mem_read_data;
         // else =0, means read_or_alu_result = alu_result
 
-    assign ctrl_reg_write = ( (opcode == S_TYPE) || (opcode == B_TYPE) ) ? 1'b0 : 1'b1;
+    assign ctrl_reg_write = (( (opcode == S_TYPE) || (opcode == B_TYPE) ) || i_DMEM_stall) ? 1'b0 : 1'b1;
         //=0 when sw,op = instr[6:0] = 0100011; or beq, op = instr[6:0] = 1100011, means reg_file write-enable = 0
         //
 
@@ -144,8 +144,6 @@ module CHIP #(                                                                  
     assign o_DMEM_wen = ctrl_mem_write;
     assign o_DMEM_addr = alu_result;
     assign o_DMEM_wdata = rs2_data;
-    //To-do: deal with stall
-
 
 
     /*Following cope with PC*/
@@ -166,13 +164,16 @@ module CHIP #(                                                                  
     assign jalr_addr = rs1_data + imm;
     //MUX5 
     always @(*) begin
-        next_PC = (ctrl_jalr) ? jalr_addr : jal_addr;
+        next_PC = (i_DMEM_stall) ? PC 
+                : (ctrl_jalr) ? jalr_addr : jal_addr;
     end
 
     //Deal with ecall
     assign ctrl_ecall = ({funct3, opcode}== {3'b000, ECALL}) ? 1'b1, 1'b0;
     //To-do:
-
+    //Ask cache to store all values back to memory. When received cache store_finish, pull up o_finish
+    //Assume no cache:
+    assign o_finish = (ctrl_ecall) 1'b1 : 1'b0;
     
 
 // ------------------------------------------------------------------------------------------------------------------------------------------------------
