@@ -152,7 +152,7 @@ module CHIP #(                                                                  
     assign pc_plus_4 = PC +4;
     assign pc_plus_imm = PC + imm;
 
-    //To-do: branch controller
+    //To-do: branch controller (br_comp, opcode) -> 
     //MUX4
     assign jal_addr = (ctrl_jal||(ctrl_branch && br_comp)) ? pc_plus_imm : pc_plus_4;
     assign jalr_addr = rs1_data + imm;
@@ -220,7 +220,7 @@ module CHIP #(                                                                  
     end
    
     //Alu control: Tofix
-    //To-do: decode mul and assign proper ctrl_alu(0111)
+    // To-do: decode mul and assign proper ctrl_alu(0111)
     always @(*) begin
         case(opcode)
             R_TYPE : begin
@@ -370,7 +370,8 @@ module alu #(
     input  [3:0] ctrl;
     input  [BIT_W-1:0] x;//rs1
     input  [BIT_W-1:0] y;//rs2
-    output reg        br_comp;
+    // output reg        br_comp;
+    output_reg      br_equal, br_less;
     output [BIT_W-1:0] out;
 
     //Parameter
@@ -380,50 +381,67 @@ module alu #(
     //wire & reg declaration
     reg            carry;
     reg [BIT_W-1:0] out;
+    reg [63:0] out_64;
 
     //To-do: instantiate MULDIV_unit
+    MULDIV_unit muldiv_unit(
+        .A(x),
+        .B(y),
+        .Y(out_64)
+    );
+
+    // Lower 32 bits of the output
+    assign out = out_64[31:0];
 
 //CL:
     always@(*)begin
         case(ctrl)
             ADD: begin
-                {carry,out} = {x[BIT_W-1], x} + {y[BIT_W-1],y};
-                br_comp = 1'b0;
+                {carry, out} = {x[BIT_W-1], x} + {y[BIT_W-1],y};
+                br_equal = 1'b0;
+                br_less = 1'b0;
             end
             SUB: begin
-                {carry,out} = {x[BIT_W-1], x} - {y[BIT_W-1],y};
-                br_comp = ~(|out);//=1 when all bits are 0; Test is this is smaller than br_comp = (out == 0) ? 1'b1 : 1'b0;
+                {carry, out} = {x[BIT_W-1], x} - {y[BIT_W-1],y};
+                br_equal = ~(|out);//=1 when all bits are 0; Test is this is smaller than br_comp = (out == 0) ? 1'b1 : 1'b0;
+                br_less = out[BIT_W-1];
             end
             BITWISE_AND:  begin
-                {carry,out} = {1'b0, x & y};
-                br_comp = 1'b0;
+                {carry, out} = {1'b0, x & y};
+                br_equal = 1'b0;
+                br_less = 1'b0;
             end  
             BITWISE_OR:begin
-                {carry,out} = {1'b0,  x | y};
-                br_comp = 1'b0;
+                {carry, out} = {1'b0,  x | y};
+                br_equal = 1'b0;
+                br_less = 1'b0;
             end     
 
             SLT:  begin
                 carry = 1'b0;
                 out = ($signed(x) < $signed(y)) ? {31'b0, 1'b1} : {31'b0, 1'b0};
-                br_comp = 1'b0;
+                br_equal = 1'b0;
+                br_less = 1'b0;
             end 
             SRA:  begin
                 carry = 1'b0;
                 out = $signed(x) >>> y[4:0];
-                br_comp = 1'b0;
+                br_equal = 1'b0;
+                br_less = 1'b0;
             end 
             SLL:  begin
                 carry = 1'b0;
                 out = x << y[4:0];
-                br_comp = 1'b0;
+                br_equal = 1'b0;
+                br_less = 1'b0;
             end 
             XOR:  begin
-                {carry,out} = {1'b0, x ^ y};
-                br_comp = 1'b0;
+                {carry, out} = {1'b0, x ^ y};
+                br_equal = 1'b0;
+                br_less = 1'b0;
             end 
 
-            default:    {br_comp, carry,out} = {1'b0, 1'b0, 32'b0};
+            default:    {br_equal, br_less, carry, out} = {1'b0, 1'b0, 1'b0, 32'b0};
         endcase
     end   
 endmodule
