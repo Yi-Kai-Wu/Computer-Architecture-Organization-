@@ -51,7 +51,6 @@ module CHIP #(                                                                  
 // Wires and Registers
 // ------------------------------------------------------------------------------------------------------------------------------------------------------
     
-    // TODO: any declaration
         reg [BIT_W-1:0] PC, next_PC;
         wire mem_cen, mem_wen;
         wire [BIT_W-1:0] mem_addr, mem_wdata, mem_rdata;
@@ -183,7 +182,6 @@ module CHIP #(                                                                  
 // Submoddules
 // ------------------------------------------------------------------------------------------------------------------------------------------------------
 
-    // TODO: Reg_file wire connection
     Reg_file reg0(               
         .i_clk  (i_clk),             
         .i_rst_n(i_rst_n),         
@@ -208,7 +206,6 @@ module CHIP #(                                                                  
 // Always Blocks
 // ------------------------------------------------------------------------------------------------------------------------------------------------------
     
-    // Todo: any combinational/sequential circuit
     /* ====================Combinational Part================== */
     //Immediate Generator
     always @(*) begin
@@ -232,8 +229,7 @@ module CHIP #(                                                                  
         endcase
     end
    
-    //Alu control: Tofix
-    // To-do: decode mul and assign proper ctrl_alu(0111)
+    //Alu control: 
     always @(*) begin
         case(opcode)
             R_TYPE : begin
