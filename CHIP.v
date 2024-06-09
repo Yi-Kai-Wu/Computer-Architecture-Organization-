@@ -152,7 +152,15 @@ module CHIP #(                                                                  
     assign pc_plus_4 = PC +4;
     assign pc_plus_imm = PC + imm;
 
-    //To-do: branch controller (br_comp, opcode) -> 
+    //To-do: branch controller (br_less, br_equal, opcode) -> br_comp
+    //BEQ: 000, BNE: 001, BLT: 100, BGE: 101
+    assign br_comp = ( 
+        (funct3 == 3'b000 && br_equal) || 
+        (funct3 == 3'b001 && ~br_equal) || 
+        (funct3 == 3'b100 && br_less) || 
+        (funct3 == 3'b101 && ~br_less) 
+    ) : 1'b0;
+    
     //MUX4
     assign jal_addr = (ctrl_jal||(ctrl_branch && br_comp)) ? pc_plus_imm : pc_plus_4;
     assign jalr_addr = rs1_data + imm;
@@ -362,7 +370,8 @@ module alu #(
     ctrl,
     x,
     y,
-    br_comp,
+    br_equal,
+    br_less,
     out  
 );
 
