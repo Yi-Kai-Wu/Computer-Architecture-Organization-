@@ -164,7 +164,9 @@ module CHIP #(                                                                  
     //Deal with ecall
     assign ctrl_ecall = ({funct3, opcode}== {3'b000, ECALL}) ? 1'b1, 1'b0;
     //To-do:
-
+    //Ask cache to store all values back to memory. When received cache store_finish, pull up o_finish
+    //Assume no cache:
+    assign o_finish = (ctrl_ecall) 1'b1 : 1'b0;
     
 
 // ------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -220,7 +222,6 @@ module CHIP #(                                                                  
     end
    
     //Alu control: Tofix
-    //To-do: decode mul and assign proper ctrl_alu(0111)
     always @(*) begin
         case(opcode)
             R_TYPE : begin
