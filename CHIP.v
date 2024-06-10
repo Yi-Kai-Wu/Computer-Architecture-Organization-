@@ -1,3 +1,11 @@
+/*///////////////////////////////////////////////////////////////////////////////
+    Module: CHIP.v
+    Creator: Yi-Kai Wu
+    Last editor: Yi-Kai Wu
+    Last edited date: 2024/06/09
+    Discription: RISC-V CPU, Final Project of CA 2024.  
+///////////////////////////////////////////////////////////////////////////////*/
+//----------------------------- DO NOT MODIFY THE I/O INTERFACE!! ------------------------------//
 module CHIP #(                                                                                  //
     parameter BIT_W = 32                                                                        //
 )(                                                                                              //
@@ -43,9 +51,10 @@ module CHIP #(                                                                  
 // Wires and Registers
 // ------------------------------------------------------------------------------------------------------------------------------------------------------
     
+    // TODO: any declaration
         reg [BIT_W-1:0] PC, next_PC;
         wire mem_cen, mem_wen;
-        wire [BIT_W-1:0] mem_addr, mem_wdata, mem_rdata;
+        wire [BIT_W-1:0] mem_addr, o_mem_wdata, mem_rdata;
         wire mem_stall;
 
          //NOT FF
@@ -142,7 +151,7 @@ module CHIP #(                                                                  
     assign pc_plus_4 = PC +4;
     assign pc_plus_imm = PC + imm;
 
-    //To-do: branch controller (br_less, br_equal, opcode) -> br_comp
+    //: branch controller (br_less, br_equal, opcode) -> br_comp
     //BEQ: 000, BNE: 001, BLT: 100, BGE: 101
     assign br_comp = ( 
         (funct3 == 3'b000 && br_equal) || 
@@ -164,6 +173,8 @@ module CHIP #(                                                                  
 
     //Deal with ecall
     assign ctrl_ecall = ({funct3, opcode}== {3'b000, ECALL}) ? 1'b1 : 1'b0;
+    //To-do:
+    //Ask cache to store all values back to memory. When received cache store_finish, pull up o_finish
     assign o_proc_finish = ctrl_ecall;
     //Assume no cache:
     assign o_finish = (ctrl_ecall && i_cache_finish) ? 1'b1 : 1'b0;
@@ -173,6 +184,7 @@ module CHIP #(                                                                  
 // Submoddules
 // ------------------------------------------------------------------------------------------------------------------------------------------------------
 
+    // TODO: Reg_file wire connection
     Reg_file reg0(               
         .i_clk  (i_clk),             
         .i_rst_n(i_rst_n),         
@@ -193,10 +205,12 @@ module CHIP #(                                                                  
         .out(alu_result)  
     );
 
+
 // ------------------------------------------------------------------------------------------------------------------------------------------------------
 // Always Blocks
 // ------------------------------------------------------------------------------------------------------------------------------------------------------
     
+    // Todo: any combinational/sequential circuit
     /* ====================Combinational Part================== */
     //Immediate Generator
     always @(*) begin
@@ -220,7 +234,7 @@ module CHIP #(                                                                  
         endcase
     end
    
-    //Alu control: 
+    //Alu control: Tofix
     always @(*) begin
         case(opcode)
             R_TYPE : begin
@@ -327,7 +341,7 @@ module Cache#(
             input [ADDR_W-1:0] i_proc_addr,
             input [BIT_W-1:0]  i_proc_wdata,
             output reg [BIT_W-1:0] o_proc_rdata,
-            output o_proc_stall,
+            output reg o_proc_stall,
             input i_proc_finish,
             output reg o_cache_finish,
         // memory interface
@@ -353,274 +367,220 @@ module Cache#(
     //assign o_proc_rdata = i_mem_rdata[0+:BIT_W];//
     //assign o_proc_stall = i_mem_stall;          //
     //------------------------------------------//
+        
+    //==== wire/reg definition ================================
+        // internal storage
+        reg  [  2:0] state_r, state_w;
+        reg  [ 31:0] cache_data [0:31], cache_data_w [0:31];
+        reg  [ 25:0] cache_tags [0:7 ], cache_tags_w [0:7 ];
+        reg          cache_valid[0:7 ], cache_valid_w[0:7 ];
+        reg          cache_dirty[0:7 ], cache_dirty_w[0:7 ];
+        reg          cache_lru  [0:3 ], cache_lru_w  [0:3 ];
+        // processor interface
+        wire         miss;
+        wire [ 25:0] tag;
+        wire [  1:0] set_i;
+        wire [  1:0] offset;
+        wire [  3:0] word_i;
+        wire [29:0] proc_addr;
+        //reg          o_proc_stall;
+        //reg  [ 31:0] o_proc_rdata;
+        wire         ele_i, lru_i;
+        // memory interface
+        reg  [ 27:0] mem_addr;
+        //reg  [127:0] o_mem_wdata;
 
-    // Todo: BONUS
-    //==== input/output definition ============================
-    
+        wire mem_ready;
+        assign mem_ready = ~i_mem_stall;
+        wire   proc_read, proc_write;
+        assign proc_read = (i_proc_cen && (!i_proc_wen));
+        assign proc_write = (i_proc_cen && i_proc_wen);
+        reg mem_read, mem_write;
+        assign o_mem_cen = (mem_read || mem_write);
+        assign o_mem_wen = mem_write;
 
-// Parameters for cache size and organization
-    parameter BLOCK_SIZE = 128; // 4 words of 32 bits each
-    parameter NUM_SETS = 4; // Half the number of blocks in a direct-mapped cache
-    parameter WORD_SIZE = 32;
-    parameter OFFSET_BITS = 2; // 4 words per block
-    parameter INDEX_BITS = 2; // log2(NUM_SETS)
-    parameter TAG_BITS = 26; // Adjusted for fewer index bits
-    parameter WAY_COUNT = 2; // 2-way associative
+        integer i;
 
-//==== wire/reg definition ================================
-    wire   [29:0] proc_addr;
-    assign proc_addr = i_proc_addr[31:2];
-    reg [27:0] mem_addr;
-    assign o_mem_addr = {mem_addr, 4'b0};
-    wire mem_ready;
-    assign mem_ready = ~i_mem_stall;
-    wire   proc_read, proc_write;
-    assign proc_read = (i_proc_cen && (!i_proc_wen));
-    assign proc_write = (i_proc_cen && i_proc_wen);
-    reg mem_read, mem_write;
-    assign o_mem_cen = (mem_read || mem_write);
-    assign o_mem_wen = mem_write;
+    //==== combinational circuit ==============================
 
+        localparam S_IDLE    = 3'd0;
+        localparam S_READ    = 3'd1;
+        localparam S_WRITE   = 3'd2;
+        localparam S_FLUSH   = 3'd3;
+        localparam S_FINISH  = 3'd4;
+        
+        wire [31:0] correct_address;
+        assign correct_address = i_proc_addr - i_offset;
+        assign proc_addr = correct_address[31:2];
+        assign {tag, word_i}   = proc_addr;
+        assign {set_i, offset} = word_i;
+        //assign proc_cen        = proc_write || proc_read;
+        assign miss            = (!cache_valid[{1'b0, set_i}] || (cache_tags[{1'b0, set_i}] != tag))
+                            && (!cache_valid[{1'b1, set_i}] || (cache_tags[{1'b1, set_i}] != tag));
+        assign ele_i           = (cache_valid[{1'b1, set_i}] && cache_tags[{1'b1, set_i}] == tag);
+        assign lru_i           = cache_lru[{set_i}];
 
-    // Cache block definition
-    reg [TAG_BITS-1:0]      tags_r[NUM_SETS-1:0][WAY_COUNT-1:0], tags_w[NUM_SETS-1:0][WAY_COUNT-1:0];
-    reg                     valid_r[NUM_SETS-1:0][WAY_COUNT-1:0], valid_w[NUM_SETS-1:0][WAY_COUNT-1:0];
-    reg                     dirty_r[NUM_SETS-1:0][WAY_COUNT-1:0], dirty_w[NUM_SETS-1:0][WAY_COUNT-1:0];
-    reg [BLOCK_SIZE-1:0]    data_r[NUM_SETS-1:0][WAY_COUNT-1:0], data_w[NUM_SETS-1:0][WAY_COUNT-1:0];
-    reg                     lru_r[NUM_SETS-1:0], lru_w[NUM_SETS-1:0]; // 0 for LRU, 1 for MRU
-    reg                     way;
+        reg [2:0] flush_index;
+        wire flush_done;
+        assign flush_done = (flush_index == 3'd7) && mem_ready;
 
-
-    // Address split
-    wire [INDEX_BITS-1:0]   index = proc_addr[OFFSET_BITS+INDEX_BITS-1:OFFSET_BITS];
-    wire [OFFSET_BITS-1:0]  offset = proc_addr[OFFSET_BITS-1:0];
-    wire [TAG_BITS-1:0]     tag = proc_addr[29:OFFSET_BITS+INDEX_BITS];
-   
-   // FSM states
-    localparam IDLE = 3'd0, COMPARE_TAG = 3'd1, WRITE_BACK = 3'd2, ALLOCATE = 3'd3, FINISH_WRITE_BACK_0 = 3'd4, FINISH_WRITE_BACK_1 = 3'd5, ALL_FINISH = 3'd6;
-    reg [2:0]               state_r, state_w;
-
-    //loop index
-    integer i, way_cnt;
-    reg [1:0] finish_wb_idx_r, finish_wb_idx_w;
-
-    reg                     hit;
-//Continuous assignment
-    // Assign outputs to output flip-flops
-    //This is incorrect
-    //assign proc_rdata = (hit && proc_read) ? data_r[index][offset*WORD_SIZE +: WORD_SIZE] : 32'b0;//e.g. offset = 0, [Word_size -1 : 0]
-    assign o_proc_stall = (i_proc_cen) ? ((hit) ? 1'b0 : 1'b1)
-                         : 1'b0;
-    // assign mem_read = mem_read_r;
-    // assign mem_write = mem_write_r;
-    // assign mem_addr = mem_addr_r;
-    // assign o_mem_wdata = mem_wdata_r;
-
-//==== combinational circuit ==============================
-/*========FSM==========================================*/
-    // FSM Next State Logic
-    always @(*) begin
-        hit = 0;
-        //state_w = state_r;
-        if(i_proc_finish) begin
-            case (state_r)
-                FINISH_WRITE_BACK_0 : state_w = ((finish_wb_idx_r == 2'b11) && mem_ready) ? FINISH_WRITE_BACK_1 : FINISH_WRITE_BACK_0;
-                FINISH_WRITE_BACK_1 : state_w = ((finish_wb_idx_r == 2'b11) && mem_ready) ? FINISH_WRITE_BACK_0 : ALL_FINISH;
-                ALL_FINISH : state_w = COMPARE_TAG;
-                default: state_w = FINISH_WRITE_BACK_0;
+        always @(*) begin
+            case (state_r) // synopsys full_case
+                S_IDLE : state_w = (i_proc_cen && miss) ? (cache_dirty[{lru_i, set_i}] ? S_WRITE : S_READ) :
+                                   (i_proc_finish ? S_FLUSH : S_IDLE);
+                S_READ : state_w = mem_ready ? S_IDLE : S_READ;
+                S_WRITE: state_w = mem_ready ? S_READ : S_WRITE;
+                S_FLUSH: state_w = (mem_ready && flush_done) ? S_FINISH : (mem_ready ? S_FLUSH : S_FLUSH);
+                S_FINISH: state_w = S_IDLE;
             endcase
         end
-        else begin
-            case (state_r)
-                //IDLE: state_w = (proc_read || proc_write) ? COMPARE_TAG : IDLE;
-                COMPARE_TAG: begin
-                    hit = (valid_r[index][0] && (tags_r[index][0] == tag)) || (valid_r[index][1] && (tags_r[index][1] == tag));
-                    if (hit) begin                 
-                        state_w = COMPARE_TAG;
-                    end
-                    else state_w = (dirty_r[index][lru_r[index]]) ? WRITE_BACK : ALLOCATE; //Cache Miss, check the lru way, if it is dirty, write back
-                                                                                    //else, allocate 
-                end
-                WRITE_BACK:
-                    state_w = (mem_ready) ? ALLOCATE : WRITE_BACK;
-                ALLOCATE:
-                    state_w = (mem_ready) ? COMPARE_TAG : ALLOCATE;
-                default: state_w = state_r;
+
+        always @(*) begin
+            for (i = 0; i < 32; i = i + 1)
+                cache_data_w[i] = cache_data[i];
+            if (state_r == S_IDLE && proc_write && !miss)
+                cache_data_w[{ele_i, word_i}] = i_proc_wdata;
+            if (state_r == S_READ) begin
+                {cache_data_w[{lru_i, set_i, 2'b11}], cache_data_w[{lru_i, set_i, 2'b10}],
+                cache_data_w[{lru_i, set_i, 2'b01}], cache_data_w[{lru_i, set_i, 2'b00}]} = i_mem_rdata;
+                if (proc_write) cache_data_w[{lru_i, word_i}] = i_proc_wdata;
+            end
+        end
+
+        always @(*) begin
+            for (i = 0; i < 8; i = i + 1) begin
+                cache_dirty_w[i] = cache_dirty[i];
+                cache_tags_w [i] = cache_tags [i];
+            end
+            if (state_r == S_IDLE && proc_write) begin
+                if (miss) cache_dirty_w[{lru_i, set_i}] = 1'b1;
+                else      cache_dirty_w[{ele_i, set_i}] = 1'b1;
+            end
+            if (state_r == S_READ) begin
+                cache_dirty_w[{lru_i, set_i}] = proc_write;
+                cache_tags_w [{lru_i, set_i}] = tag;
+            end
+        end
+
+        always @(*) begin
+            for (i = 0; i < 8; i = i + 1)
+                cache_valid_w[i] = cache_valid[i] || (state_r == S_READ && i == {lru_i, set_i});
+        end
+
+        always @(*) begin
+            for (i = 0; i < 4; i = i + 1)
+                cache_lru_w[i] = cache_lru[i];
+            if (state_r == S_IDLE && i_proc_cen && !miss)
+                cache_lru_w[set_i] = !ele_i;
+            if (state_r == S_READ && mem_ready)
+                cache_lru_w[set_i] = !lru_i;
+        end
+
+        always @(*) begin
+            case (state_r) // synopsys full_case
+                S_IDLE : o_proc_stall = i_proc_cen && miss;
+                S_READ : o_proc_stall = i_mem_stall;
+                S_WRITE: o_proc_stall = 1'b1;
+                S_FLUSH: o_proc_stall = 1'b1;
+                S_FINISH: o_proc_stall = 1'b0;
             endcase
         end
-    end
-    // FSM Output Logic
-    always @(*) begin
-        //default value
-        // proc_rdata_w = proc_rdata_r;  // Default to holding value
-        // proc_stall_w = 0;
-        mem_read = 0;
-        mem_write = 0;
-        mem_addr = 0;
-        o_mem_wdata = 128'b0;
-        o_proc_rdata = 32'b0;
-        o_cache_finish = 0;
 
-        for (i = 0; i < NUM_SETS; i = i + 1) begin
-            for (way_cnt = 0; way_cnt < WAY_COUNT; way_cnt = way_cnt + 1) begin
-                tags_w[i][way_cnt] = tags_r[i][way_cnt];
-                valid_w[i][way_cnt] = valid_r[i][way_cnt];
-                dirty_w[i][way_cnt] = dirty_r[i][way_cnt];
-                data_w[i][way_cnt] = data_r[i][way_cnt];
-            end
-            lru_w[i] = lru_r[i];
+        always @(*) begin
+            case (state_r) // synopsys full_case
+                S_IDLE: o_proc_rdata = cache_data[{ele_i, set_i, offset}];
+                S_READ: o_proc_rdata = i_mem_rdata[32 * offset +: 32];
+            endcase
         end
-        finish_wb_idx_w = finish_wb_idx_r;
 
-        case (state_r)
-            COMPARE_TAG: begin
-                //hit condition:
-                if (valid_r[index][0] && (tags_r[index][0] == tag)) begin
-                    //which_set = 0;
-                    if(proc_read) o_proc_rdata = data_r[index][0][offset*WORD_SIZE +: WORD_SIZE];//e.g. offset = 0, [Word_size -1 : 0]
-                    if (proc_write) begin
-                        data_w[index][0][offset*WORD_SIZE +: WORD_SIZE] = i_proc_wdata;
-                        dirty_w[index][0] = 1;
-                    end
-                    lru_w[index] = 1'b1;
+        always @(*) begin
+            case (state_r) // synopsys full_case
+                S_IDLE: begin
+                    mem_read  = proc_read  && miss;
+                    mem_write = proc_write && miss && cache_dirty[{lru_i, set_i}];
                 end
-                else if(valid_r[index][1] && (tags_r[index][1] == tag)) begin
-                    //which_set = 1;
-                    if(proc_read) o_proc_rdata = data_r[index][1][offset*WORD_SIZE +: WORD_SIZE];//e.g. offset = 0, [Word_size -1 : 0]
-                    if (proc_write) begin
-                        data_w[index][1][offset*WORD_SIZE +: WORD_SIZE] = i_proc_wdata;
-                        dirty_w[index][1] = 1;
-                    end
-                    lru_w[index] = 1'b0;
-                end              
-                else begin
-                    //which_set = 1'bz;//proc_stall_w = 1'b1;
+                S_READ: begin
+                    mem_read  = 1'b1;
+                    mem_write = 1'b0;
                 end
+                S_WRITE: begin
+                    mem_read  = 1'b0;
+                    mem_write = 1'b1;
+                end
+                S_FLUSH: begin
+                    mem_read  = 1'b0;
+                    mem_write = cache_dirty[flush_index];
+                end
+                S_FINISH: begin
+                    mem_read  = 1'b0;
+                    mem_write = 1'b0;
+                end
+            endcase
+        end
 
-                //miss
-                // Even if write, no need to set dirty, since after coming back to COMPARE_TAG from ALLOCATE
-                // it will compare the tags and find it hit and then set dirty
-            end
-            WRITE_BACK: begin
-                mem_write = 1;
-                if (mem_ready) begin
-                    mem_write = 0;
-                    dirty_w[index][lru_r[index]] = 0;
-                end 
-                else begin
-                    mem_addr = {tags_r[index][lru_r[index]], index};//28b, 4-word addressing, with the stored tag
-                    o_mem_wdata = data_r[index][lru_r[index]];
-                    // proc_stall_w = 1;
-                end
-            end
-            ALLOCATE: begin
-                mem_read = 1;
-                if (mem_ready) begin
-                    data_w[index][lru_r[index]] = i_mem_rdata;
-                    tags_w[index][lru_r[index]] = tag;//update tag 
-                    valid_w[index][lru_r[index]] = 1;
-                end 
-                else begin
-                    mem_addr = {tag, index};//28b, 4-word addressing, with the new tag
-                    // proc_stall_w = 1;
-                end
-            end
+        always @(*) begin
+            case (state_r) // synopsys full_case
+                S_IDLE : mem_addr = cache_dirty[{lru_i, set_i}] ? {cache_tags[{lru_i, set_i}], set_i} : {tag, set_i};
+                S_READ : mem_addr = {tag, set_i};
+                S_WRITE: mem_addr = {cache_tags[{lru_i, set_i}], set_i};
+                S_FLUSH: mem_addr = {cache_tags[flush_index], flush_index[1:0]};
+            endcase
+        end
+        assign o_mem_addr = {mem_addr, 4'b0}+ i_offset;
 
-            FINISH_WRITE_BACK_0 : begin
-                mem_write = 1;
-                if (mem_ready) begin
-                    mem_write = 0;
-                    dirty_w[finish_wb_idx_r][0] = 0;
-                    finish_wb_idx_w = finish_wb_idx_r +1;
-                end 
-                else begin
-                    mem_addr = {tags_r[finish_wb_idx_r][0], index};//28b, 4-word addressing, with the stored tag
-                    o_mem_wdata = data_r[finish_wb_idx_r][0];
-                    // proc_stall_w = 1;
-                end
-            end
-            FINISH_WRITE_BACK_1 : begin
-                mem_write = 1;
-                if (mem_ready) begin
-                    mem_write = 1;
-                    dirty_w[finish_wb_idx_r][1] = 0;
-                    finish_wb_idx_w = finish_wb_idx_r +1;
-                end 
-                else begin
-                    mem_addr = {tags_r[finish_wb_idx_r][1], index};//28b, 4-word addressing, with the stored tag
-                    o_mem_wdata = data_r[finish_wb_idx_r][1];
-                    // proc_stall_w = 1;
-                end
-            end
-            ALL_FINISH : begin
-                o_cache_finish = 1;
-            end
+        always @(*) begin
+            o_mem_wdata = {cache_data[{lru_i, set_i, 2'b11}], cache_data[{lru_i, set_i, 2'b10}],
+                        cache_data[{lru_i, set_i, 2'b01}], cache_data[{lru_i, set_i, 2'b00}]};
+            if (state_r == S_FLUSH)
+                o_mem_wdata = {cache_data[{flush_index, 2'b11}], cache_data[{flush_index, 2'b10}],
+                             cache_data[{flush_index, 2'b01}], cache_data[{flush_index, 2'b00}]};
+        end
 
-            default: begin
-                mem_read = 0;
-                mem_write = 0;
-                mem_addr = 0;
-                o_mem_wdata = 128'b0;
-                o_proc_rdata = 32'b0;
-                o_cache_finish = 0;
 
-                for (i = 0; i < NUM_SETS; i = i + 1) begin
-                    for (way_cnt = 0; way_cnt < WAY_COUNT; way_cnt = way_cnt + 1) begin
-                        tags_w[i][way_cnt] = tags_r[i][way_cnt];
-                        valid_w[i][way_cnt] = valid_r[i][way_cnt];
-                        dirty_w[i][way_cnt] = dirty_r[i][way_cnt];
-                        data_w[i][way_cnt] = data_r[i][way_cnt];
-                    end
-                    lru_w[i] = lru_r[i];
-                end
-                finish_wb_idx_w = finish_wb_idx_r;
-            end
-        endcase
-    end
-
-//==== sequential circuit =================================
+    //==== sequential circuit =================================
     always@( posedge i_clk ) begin
-        if( i_rst_n ) begin
-            state_r <= COMPARE_TAG;
-            // proc_stall_r <= 0;
-            //mem_read_r <= 0;
-            // mem_write_r <= 0;
-            // // proc_rdata_r <= 32'b0;
-            // mem_addr_r <= 28'b0;
-            // mem_wdata_r <= {BLOCK_SIZE{1'b0}};
-            for (i = 0; i < NUM_SETS; i = i + 1) begin
-                for (way_cnt = 0; way_cnt < WAY_COUNT; way_cnt = way_cnt + 1) begin
-                    tags_r[i][way_cnt] <= 0;
-                    valid_r[i][way_cnt] <= 0;
-                    dirty_r[i][way_cnt] <= 0;//0-extension
-                    data_r[i][way_cnt] <= 0;
-                end
-                lru_r[i] <= 0;
+        if( !i_rst_n ) begin
+            for (i = 0; i < 32; i = i + 1) begin
+                cache_data [i] <= 32'b0;
             end
-            finish_wb_idx_r <= 0;
+            for (i = 0; i < 8; i = i + 1) begin
+                cache_tags [i] <= 26'b0;
+                cache_valid[i] <= 1'b0;
+                cache_dirty[i] <= 1'b0;
+            end
+            for (i = 0; i < 4; i = i + 1) begin
+                cache_lru  [i] <= 1'b0;
+            end
+            state_r <= S_IDLE;
+            flush_index <= 3'd0;
+            o_cache_finish <= 1'b0;
         end
-
         else begin
-            state_r <= state_w;           
-            // proc_stall_r <= proc_stall_w;
-            // mem_read_r <= mem_read_w;
-            // mem_write_r <= mem_write_w;
-            // // proc_rdata_r <= proc_rdata_w;
-            // mem_addr_r <= mem_addr_w;
-            // mem_wdata_r <= mem_wdata_w;
-            for (i = 0; i < NUM_SETS; i = i + 1) begin
-                for (way_cnt = 0; way_cnt < WAY_COUNT; way_cnt = way_cnt + 1) begin
-                    tags_r[i][way_cnt] <= tags_w[i][way_cnt];
-                    valid_r[i][way_cnt] <= valid_w[i][way_cnt];
-                    dirty_r[i][way_cnt] <= dirty_w[i][way_cnt];
-                    data_r[i][way_cnt] <= data_w[i][way_cnt];
-                end
-                lru_r[i] <= lru_w[i];
+            for (i = 0; i < 32; i = i + 1) begin
+                cache_data [i] <= cache_data_w [i];
             end
-            finish_wb_idx_r <= finish_wb_idx_w;
+            for (i = 0; i < 8; i = i + 1) begin
+                cache_tags [i] <= cache_tags_w [i];
+                cache_valid[i] <= cache_valid_w[i];
+                cache_dirty[i] <= cache_dirty_w[i];
+            end
+            for (i = 0; i < 4; i = i + 1) begin
+                cache_lru  [i] <= cache_lru_w  [i];
+            end
+            state_r <= state_w;
+            if (state_r == S_FLUSH && mem_ready) begin
+                    flush_index <= flush_index + 1;
+                end
+
+            if (state_r == S_FINISH) begin
+                o_cache_finish <= 1'b1;
+            end else if (i_proc_finish) begin
+                o_cache_finish <= 1'b0;
+            end
         end
     end
 endmodule
+
 
 module alu #(
     parameter BIT_W = 32
@@ -650,7 +610,6 @@ module alu #(
     reg [BIT_W-1:0] out;
     wire [63:0] out_64;
 
-    //To-do: instantiate MULDIV_unit
     MULDIV_unit muldiv_unit(
         .A(x),
         .B(y),
@@ -747,7 +706,7 @@ module MULDIV_unit(
     //    // y22_stage_1 = y22;
     // end
 
-	// always @(posedge clk) begin
+	// always @(posedge i_clk) begin
 	// 	if (!rst_n) begin
     //         y11 <= 32'b0;
     //         y12 <= 32'b0;
